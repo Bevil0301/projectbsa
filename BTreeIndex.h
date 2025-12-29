@@ -131,11 +131,34 @@ void searchRangeRecursive(BTreeNode<RecordType, KeyType>* node, KeyType minK, Ke
     }
 }
 
-// Hàm public để bên ngoài gọi
-void searchRange(KeyType minK, KeyType maxK) {
-    if (root != nullptr) {
-        searchRangeRecursive(root, minK, maxK);
+    // Hàm public để bên ngoài gọi
+    void searchRange(KeyType minK, KeyType maxK) {
+        if (root != nullptr) {
+            searchRangeRecursive(root, minK, maxK);
+        }
     }
-}
+
+    // Trong BTreeIndex.h
+    void saveToStream(BTreeNode<RecordType, KeyType>* node, ofstream& fout) {
+        if (node == nullptr) return;
+        int i;
+        for (i = 0; i < node->data.size(); i++) {
+            if (!node->isLeaf) saveToStream(node->children[i], fout);
+            // Ghi dữ liệu: ID, Username, FullName, GPA phân cách bằng dấu phẩy
+            fout << node->data[i].id << "," 
+                << node->data[i].username << "," 
+                << node->data[i].fullName << "," 
+                << node->data[i].gpa << "\n";
+        }
+        if (!node->isLeaf) saveToStream(node->children[i], fout);
+    }
+
+    void saveToFile(string filename) {
+        ofstream fout(filename);
+        if (fout.is_open()) {
+            if (root) saveToStream(root, fout);
+            fout.close();
+        }
+    }
 
 };

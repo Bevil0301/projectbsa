@@ -4,6 +4,8 @@
 #include <string>
 #include<iomanip>
 #include <functional> // Để dùng std::function
+#include<fstream>
+#include<sstream>
 
 using namespace std;
 
