@@ -2,12 +2,12 @@
 #include "Common.h"
 #include <vector>
 #include <string>
-#include <functional> // Sử dụng std::hash
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 
 using namespace std;
 
-// Đảm bảo có hằng số giới hạn số lần đá trứng để tránh lặp vô tận
 #ifndef MAX_KICK_COUNT
 #define MAX_KICK_COUNT 500
 #endif
@@ -19,95 +19,187 @@ private:
         SecondaryKey key;
         PrimaryKey value;
         bool active;
-
-        // Constructor mặc định
         Entry() : active(false) {}
-
-        // Constructor đầy đủ tham số để tránh lỗi gán list khởi tạo {...}
-        Entry(SecondaryKey k, PrimaryKey v, bool a) 
-            : key(k), value(v), active(a) {}
+        Entry(SecondaryKey k, PrimaryKey v, bool a) : key(k), value(v), active(a) {}
     };
 
     vector<Entry> table1;
     vector<Entry> table2;
     int currentSize;
+    int numElements;
 
-    // Hàm băm 1
-    size_t hash1(SecondaryKey key) {
-        return hash<SecondaryKey>{}(key) % currentSize;
+    int polynomialHash(SecondaryKey key, int seed) {
+        string sKey = (string)key; 
+        long long hashValue = 0;
+        long long p = 53;
+        long long m = 1e9 + 9;
+        long long p_pow = 1;
+
+        for (unsigned char c : sKey) { 
+            hashValue = (hashValue + c * p_pow) % m;
+            p_pow = (p_pow * p) % m;
+        }
+
+        long long finalHash = (hashValue + seed) % currentSize;
+        if (finalHash < 0) finalHash += currentSize;
+        return (int)finalHash;
     }
 
-    // Hàm băm 2 (biến tấu từ key gốc để tạo vị trí khác biệt)
-    size_t hash2(SecondaryKey key) {
-        string saltedKey = string(key) + "_alt"; 
-        return hash<string>{}(saltedKey) % currentSize;
+    int hash1(SecondaryKey key) {
+        return polynomialHash(key, 0);
     }
 
-    // Hàm Rehash khi bảng quá đầy hoặc bị chu trình (cycle)
+    int hash2(SecondaryKey key) {
+        return polynomialHash(key, 1234567);
+    }
+
     void rehash() {
-        cout << "[LOG] Cuckoo Hash: Rehash dang dien ra (X2 Size)...\n";
         vector<Entry> oldTable1 = table1;
         vector<Entry> oldTable2 = table2;
 
         currentSize *= 2;
         table1.assign(currentSize, Entry());
         table2.assign(currentSize, Entry());
+        numElements = 0;
 
         for (auto &e : oldTable1) if (e.active) insert(e.key, e.value);
         for (auto &e : oldTable2) if (e.active) insert(e.key, e.value);
     }
 
+    void insertHelper(SecondaryKey key, PrimaryKey value) {
+        for (int count = 0; count < MAX_KICK_COUNT; count++) {
+            int h1 = hash1(key);
+            if (!table1[h1].active) {
+                table1[h1] = Entry(key, value, true);
+                numElements++;
+                return;
+            }
+            swap(key, table1[h1].key);
+            swap(value, table1[h1].value);
+
+            int h2 = hash2(key);
+            if (!table2[h2].active) {
+                table2[h2] = Entry(key, value, true);
+                numElements++;
+                return;
+            }
+            swap(key, table2[h2].key);
+            swap(value, table2[h2].value);
+        }
+        rehash();
+        insertHelper(key, value);
+    }
+
 public:
-    CuckooHashTable(int size = 1000) : currentSize(size) {
+    CuckooHashTable(int size = 1000) : currentSize(size), numElements(0) {
         table1.resize(currentSize);
         table2.resize(currentSize);
     }
 
-    // Tra cứu O(1)
     PrimaryKey lookup(SecondaryKey key) override {
-        size_t h1 = hash1(key);
+        int h1 = hash1(key);
         if (table1[h1].active && table1[h1].key == key) return table1[h1].value;
 
-        size_t h2 = hash2(key);
+        int h2 = hash2(key);
         if (table2[h2].active && table2[h2].key == key) return table2[h2].value;
 
-        return -1; // Trả về -1 nếu không tìm thấy ID
+        return -1; 
     }
 
-    // Thêm phần tử với cơ chế Cuckoo Kicking
     void insert(SecondaryKey key, PrimaryKey value) override {
-        // Nếu key đã tồn tại, không cần chèn mới
-        if (lookup(key) != -1) return;
+        int h1 = hash1(key);
+        if (table1[h1].active && table1[h1].key == key) { table1[h1].value = value; return; }
+        
+        int h2 = hash2(key);
+        if (table2[h2].active && table2[h2].key == key) { table2[h2].value = value; return; }
 
-        SecondaryKey currKey = key;
-        PrimaryKey currVal = value;
+        if ((float)numElements / (currentSize * 2) > 0.7) {
+            rehash();
+        }
+        insertHelper(key, value);
+    }
+    
+    void remove(SecondaryKey key) {
+        int h1 = hash1(key);
+        if (table1[h1].active && table1[h1].key == key) {
+            table1[h1].active = false;
+            numElements--;
+            return;
+        }
+        int h2 = hash2(key);
+        if (table2[h2].active && table2[h2].key == key) {
+            table2[h2].active = false;
+            numElements--;
+            return;
+        }
+    }
 
-        for (int count = 0; count < MAX_KICK_COUNT; count++) {
-            // Thử bảng 1
-            size_t h1 = hash1(currKey);
-            if (!table1[h1].active) {
-                table1[h1] = Entry(currKey, currVal, true);
-                return;
+void printTable() {
+        // 1. In Thống kê tổng quan trước
+        cout << "\n" << string(80, '=') << endl;
+        cout << " [CUCKOO HASH STATUS] " << endl;
+        cout << " + Capacity (Suc chua): " << currentSize << " slots" << endl;
+        cout << " + Active Items (Da dung): " << numElements << " sinh vien" << endl;
+        
+        // Tính % lấp đầy
+        float loadFactor = (float)numElements / (currentSize * 2) * 100.0f;
+        cout << " + Load Factor (Ty le day): " << fixed << setprecision(2) << loadFactor << "%" << endl;
+        
+        if (loadFactor > 50.0) cout << "   (Canh bao: Bang sap day, chuan bi Rehash...)" << endl;
+        
+        cout << string(80, '-') << endl;
+        cout << left << setw(10) << "Index" << " | "
+             << left << setw(32) << "TABLE 1 (Primary)" << " | "
+             << left << setw(32) << "TABLE 2 (Backup)" << endl;
+        cout << string(80, '-') << endl;
+
+        // 2. Duyệt toàn bộ bảng, KHÔNG GIỚI HẠN LIMIT
+        bool isEmpty = true;
+        int countPrinted = 0;
+
+        for (int i = 0; i < currentSize; i++) {
+            // Logic lọc: Chỉ in nếu dòng đó có dữ liệu
+            bool hasRowData = false;
+            if (table1[i].active || table2[i].active) hasRowData = true;
+
+            if (hasRowData) {
+                isEmpty = false;
+                countPrinted++;
+
+                // In chỉ số Index
+                cout << left << setw(10) << i << " | ";
+
+                // In dữ liệu Bảng 1
+                if (table1[i].active) {
+                    stringstream ss;
+                    ss << table1[i].key << " (" << table1[i].value << ")";
+                    cout << setw(32) << ss.str();
+                } else {
+                    cout << setw(32) << " ."; 
+                }
+
+                cout << " | ";
+
+                // In dữ liệu Bảng 2
+                if (table2[i].active) {
+                    stringstream ss;
+                    ss << table2[i].key << " (" << table2[i].value << ")";
+                    cout << setw(32) << ss.str();
+                } else {
+                    cout << setw(32) << " .";
+                }
+                
+                cout << endl;
             }
-
-            // Đá trứng: Đổi chỗ phần tử hiện tại với phần tử trong bảng
-            swap(currKey, table1[h1].key);
-            swap(currVal, table1[h1].value);
-
-            // Thử bảng 2 với phần tử vừa bị đá
-            size_t h2 = hash2(currKey);
-            if (!table2[h2].active) {
-                table2[h2] = Entry(currKey, currVal, true);
-                return;
-            }
-
-            // Tiếp tục đá ở bảng 2
-            swap(currKey, table2[h2].key);
-            swap(currVal, table2[h2].value);
         }
 
-        // Nếu vượt quá giới hạn đá trứng -> Cần Rehash bảng
-        rehash();
-        insert(currKey, currVal);
+        // 3. Xử lý trường hợp đặc biệt
+        if (isEmpty) {
+            cout << "       (Bang hien tai dang trong rong)" << endl;
+        } else {
+            cout << string(80, '-') << endl;
+            cout << "-> Da hien thi toan bo " << countPrinted << " dong co du lieu." << endl;
+        }
+        cout << string(80, '=') << endl;
     }
 };
