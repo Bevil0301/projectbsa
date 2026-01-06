@@ -2,135 +2,126 @@
 #include "Common.h"
 #include "BTreeIndex.h"
 #include "CuckooIndex.h"
-#include <vector>
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 using namespace std;
 
 class HighSpeedDB {
 public:
-    // Định nghĩa kiểu rõ ràng để code ngắn gọn
+    // Định nghĩa kiểu cho gọn
     using BTreeIndexType = BTree<Student, int>;
     using CuckooIndexType = CuckooHashTable<string, int>;
 
 private:
-    BTreeIndexType* primaryIndex;    // Module 1: B-Tree (Lưu trữ chính, Sort ID)
-    CuckooIndexType* secondaryIndex; // Module 2: Cuckoo (Tra cứu User cực nhanh)
-    vector<Student> rawData;         // Module 3: Backup & Duyệt tuần tự
+    BTreeIndexType* primaryIndex;    // B-Tree
+    CuckooIndexType* secondaryIndex; // Hash
+    
+    // [THÊM LẠI] Vector lưu trữ tuần tự (phục vụ so sánh tốc độ)
+    vector<Student> rawData; 
 
 public:
     HighSpeedDB() {
-        // Khởi tạo các cấu trúc dữ liệu
         primaryIndex = new BTreeIndexType(BTREE_MIN_DEGREE);
-        secondaryIndex = new CuckooIndexType(2000); // Size lớn chút cho ít va chạm
+        secondaryIndex = new CuckooIndexType(2000); 
     }
 
     ~HighSpeedDB() {
         delete primaryIndex;
         delete secondaryIndex;
+        // vector tự giải phóng bộ nhớ, không cần delete
     }
 
-    // --- 1. THÊM SINH VIÊN (Kết hợp cả 3 nơi) ---
+    // --- 1. THÊM SINH VIÊN (Đồng bộ cả 3 nơi) ---
     void addStudent(int id, string user, string name, float gpa) {
         Student s(id, user, name, gpa);
         
-        // Thêm vào B-Tree (Để tìm theo ID)
+        // 1. Lưu vào B-Tree (Sắp xếp, Tìm ID nhanh)
         primaryIndex->insert(s);
         
-        // Thêm vào Cuckoo (Để tìm theo User -> Trả về ID)
+        // 2. Lưu vào Cuckoo Hash (Tìm User nhanh)
         secondaryIndex->insert(s.username, s.id);
         
-        // Thêm vào Vector (Để lưu file cho dễ)
+        // 3. [THÊM LẠI] Lưu vào Vector (Để test Linear Search chậm chạp)
         rawData.push_back(s);
     }
 
-    // --- 2. CẬP NHẬT ĐIỂM (TÍNH NĂNG BẠN VỪA THÊM) ---
+    // --- [MỚI] LINEAR SEARCH (Độ phức tạp O(N)) ---
+    // Dùng để chạy benchmark so sánh sự chậm chạp so với B-Tree
+    bool searchLinear(int id) {
+        for (const auto& s : rawData) {
+            if (s.id == id) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // --- 2. CẬP NHẬT GPA ---
     void updateGPA(int id, float newScore) {
-        // Bước 1: Tìm trong B-Tree để sửa
+        // Sửa trong B-Tree (Nơi lưu trữ chính)
         Student* s = primaryIndex->search(id);
+        
         if (s != nullptr) {
-            s->gpa = newScore;
-            cout << "[UPDATE] Da cap nhat GPA cua ID " << id << " thanh " << newScore << endl;
-            
-            // Bước 2: Quan trọng! Phải sửa cả trong rawData để khi Save không bị mất
-            for (auto& st : rawData) {
-                if (st.id == id) {
-                    st.gpa = newScore;
+            s->gpa = newScore; // Update qua con trỏ (nhanh)
+
+            // [ĐỒNG BỘ DỮ LIỆU]
+            // Vì ta dùng thêm rawData, nên phải sửa cả trong rawData để dữ liệu không bị lệch.
+            // (Dù việc này tốn O(N) nhưng cần thiết để giữ tính nhất quán)
+            for (auto& std : rawData) {
+                if (std.id == id) {
+                    std.gpa = newScore;
                     break;
                 }
             }
+            cout << "[UPDATE] Da cap nhat GPA cho ID " << id << ".\n";
         } else {
-            cout << "[ERROR] Khong tim thay sinh vien co ID " << id << " de update!" << endl;
+            cout << "[ERROR] Khong tim thay sinh vien co ID " << id << endl;
         }
     }
 
-    // --- 3. TÌM KIẾM (Search) ---
-    
-    // Tìm ID dựa trên Username (Dùng Cuckoo) - Tốc độ O(1)
+    // --- 3. CÁC HÀM TÌM KIẾM NHANH (WRAPPER) ---
     int searchByUsername(string user) {
         return secondaryIndex->lookup(user);
     }
 
-    // Tìm Student Object dựa trên ID (Dùng B-Tree) - Tốc độ O(log N)
     Student* searchByID(int id) {
         return primaryIndex->search(id);
     }
 
-    // Tìm kiếm khoảng (Range Search)
     void searchRange(int minID, int maxID) {
-        cout << "\n[RANGE] Danh sach tu ID " << minID << " den " << maxID << ":\n";
         primaryIndex->searchRange(minID, maxID);
     }
 
-    // --- 4. CÁC TÍNH NĂNG QUẢN LÝ KHÁC ---
-
-    // Hiển thị tất cả (đã sort)
     void showAllSorted() {
         primaryIndex->traverse();
     }
 
-    // Visualizer: Xem cấu trúc Hash bên trong
-    void showCuckooStructure() {
-        secondaryIndex->printTable();
-    }
-
-    // Xóa User (Remove)
-    void removeUser(string user) {
-        secondaryIndex->remove(user);
-        // Lưu ý: Tạm thời chỉ xóa trong Hash để demo thuật toán
-    }
-
-    // --- 5. LƯU & ĐỌC FILE (Dùng dấu phẩy như code của bạn) ---
+    // --- 4. LƯU & ĐỌC FILE ---
+    
+    // Lưu: Dùng B-Tree để ghi file đã sắp xếp
     void saveData() {
-        ofstream file("database.txt");
-        if (!file.is_open()) return;
-
-        // Ghi format: ID,Username,Name,GPA
-        for (const auto& s : rawData) {
-            file << s.id << "," << s.username << "," << s.fullName << "," << s.gpa << endl;
-        }
-        file.close();
-        cout << "[DISK] Da luu " << rawData.size() << " sinh vien vao file.\n";
+        primaryIndex->saveToFile("database.txt");
+        // cout << "[DISK] Da luu du lieu xuong file.\n";
     }
 
+    // Đọc: Đọc từng dòng và gọi addStudent để đẩy vào cả 3 cấu trúc
     bool loadData() {
         ifstream file("database.txt");
         if (!file.is_open()) return false;
-        if (file.peek() == ifstream::traits_type::eof()) return false; // File rỗng
 
-        rawData.clear();
+        // Kiểm tra file rỗng
+        if (file.peek() == ifstream::traits_type::eof()) return false;
+
         string line;
-        int count = 0;
-
         while (getline(file, line)) {
             if (line.empty()) continue;
             stringstream ss(line);
             string segment;
             vector<string> parts;
 
-            // Tách chuỗi bằng dấu phẩy ','
             while (getline(ss, segment, ',')) {
                 parts.push_back(segment);
             }
@@ -141,15 +132,14 @@ public:
                     string user = parts[1];
                     string name = parts[2];
                     float gpa = stof(parts[3]);
-                    
-                    // Gọi hàm addStudent của chính class này để nó tự đẩy vào BTree/Cuckoo
+
+                    // Gọi hàm addStudent của class này
+                    // Nó sẽ tự động thêm vào B-Tree, Hash và cả rawData
                     addStudent(id, user, name, gpa);
-                    count++;
                 } catch (...) { continue; }
             }
         }
         file.close();
-        cout << "[DISK] Da tai thanh cong " << count << " ban ghi.\n";
         return true;
     }
 };

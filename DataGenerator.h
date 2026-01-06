@@ -1,29 +1,54 @@
+// Filename: DataGenerator.h
+#pragma once
+#include "HighSpeedDB.h" // Bắt buộc phải include để gọi được db.addStudent
+#include <vector>
+#include <string>
+#include <random> // Thư viện random chuẩn C++11
+
+using namespace std;
+
+// Hàm phụ trợ: Sinh tên ngẫu nhiên
 string generateRandomName() {
-    string first[] = {"Nguyen", "Tran", "Le", "Pham", "Hoang", "Huynh", "Phan", "Vu", "Vo", "Dang"};
-    string middle[] = {"Van", "Thi", "Huu", "Duc", "Minh", "Ngoc", "Thanh", "Quoc", "Gia", "Xuan"};
-    string last[] = {"An", "Binh", "Cuong", "Dung", "Giang", "Huy", "Khoa", "Lam", "Nam", "Tuan"};
+    static const vector<string> ho = {"Nguyen", "Tran", "Le", "Pham", "Hoang", "Huynh", "Phan", "Vu", "Vo", "Dang"};
+    static const vector<string> dem = {"Van", "Thi", "Minh", "Huu", "Duc", "Thuy", "Ngoc", "Quang", "Gia", "Xuan"};
+    static const vector<string> ten = {"Tuan", "Nam", "Hung", "Dung", "Hoa", "Lan", "Mai", "Cuc", "Truc", "Quynh", "An", "Binh"};
     
-    return first[rand() % 10] + " " + middle[rand() % 10] + " " + last[rand() % 10];
+    // Dùng static random engine để tối ưu hiệu năng
+    static random_device rd;
+    static mt19937 gen(rd());
+    uniform_int_distribution<> disHo(0, ho.size() - 1);
+    uniform_int_distribution<> disDem(0, dem.size() - 1);
+    uniform_int_distribution<> disTen(0, ten.size() - 1);
+
+    return ho[disHo(gen)] + " " + dem[disDem(gen)] + " " + ten[disTen(gen)];
 }
 
+// Hàm phụ trợ: Sinh username từ ID (cho nhất quán)
+string generateUsername(int id) {
+    return "user_" + to_string(id);
+}
+
+// HÀM CHÍNH: Sinh dữ liệu giả
 void generateMockData(HighSpeedDB& db, int count) {
-    cout << "Dang sinh " << count << " sinh vien gia lap..." << endl;
+    cout << "--- DANG SINH " << count << " DU LIEU GIA (TU DATA GENERATOR) ---\n";
     
-    // Sử dụng random engine hiện đại cho ID unique tốt hơn
     random_device rd;
     mt19937 gen(rd());
-    uniform_int_distribution<> idDist(1000000, 9999999); // ID 7 chữ số
-    uniform_real_distribution<> gpaDist(0.0, 4.0);
+    uniform_real_distribution<> gpaDist(1.0, 4.0); // Random GPA từ 1.0 đến 4.0
 
-    // Dùng set để đảm bảo ID không trùng khi generate
-    vector<int> uniqueIDs;
-    while(uniqueIDs.size() < count) {
-        uniqueIDs.push_back(idDist(gen)); 
-    }
+    int startID = 1000; // Bắt đầu từ ID 1000
 
     for (int i = 0; i < count; ++i) {
-        Student s(uniqueIDs[i], generateRandomName(), gpaDist(gen));
-        db.addStudent(s);
+        int id = startID + i;
+        string name = generateRandomName();
+        string user = generateUsername(id);
+        
+        // Làm tròn GPA 1 số lẻ
+        float rawGPA = gpaDist(gen);
+        float gpa = round(rawGPA * 10) / 10.0;
+
+        // Gọi hàm của HighSpeedDB
+        db.addStudent(id, user, name, gpa);
     }
-    cout << "-> Da xong! Database hien tai co: " << db.getDataSize() << " records.\n" << endl;
+    cout << "-> Da xong! Database hien tai co: " << count << " records.\n" << endl;
 }
